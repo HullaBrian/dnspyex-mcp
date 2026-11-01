@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Builds dnSpy.Mcp.x.dll, a dnSpyEx extension. It is compiled against the binaries of an installed
+    dnSpyEx (net10.0-windows build) so it matches exactly what it will be loaded into.
+    Override the location with: dotnet build -p:DnSpyBin=C:\path\to\dnSpy\bin
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>dnSpy.Mcp.x</AssemblyName>
+    <RootNamespace>dnSpy.Mcp</RootNamespace>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <Version>0.1.0</Version>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <DnSpyBin Condition=" '$(DnSpyBin)' == '' ">$(MSBuildThisFileDirectory)..\..\.tools\dnSpy\bin</DnSpyBin>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <DnSpyRef Include="dnlib;dnSpy.Contracts.DnSpy;dnSpy.Contracts.Logic;dnSpy.Contracts.Debugger;dnSpy.Contracts.Debugger.DotNet;Microsoft.CodeAnalysis;Microsoft.CodeAnalysis.CSharp;Microsoft.CodeAnalysis.Scripting;Microsoft.CodeAnalysis.CSharp.Scripting;System.ComponentModel.Composition;Microsoft.VisualStudio.Text.Data;Microsoft.VisualStudio.Text.UI;Microsoft.VisualStudio.Text.UI.Wpf;Microsoft.VisualStudio.CoreUtility" />
+    <Reference Include="@(DnSpyRef)">
+      <HintPath>$(DnSpyBin)\%(Identity).dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Reference\Topics\*.md" LogicalName="dnSpy.Mcp.Topics.%(Filename).md" />
+  </ItemGroup>
+
+</Project>

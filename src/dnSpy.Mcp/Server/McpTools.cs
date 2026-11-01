@@ -52,7 +52,8 @@ namespace dnSpy.Mcp.Server {
 - Results are capped (max_output_chars), so filter with LINQ (Where/Take/Select) instead of dumping whole modules.";
 
 		public JsonArray ListTools() => new JsonArray {
-			Tool("execute_csharp",
+			Tool("execute_csharp", "Execute C#",
+				readOnlyHint: false, destructiveHint: true, openWorldHint: true,
 				"Execute C# script code inside the running dnSpyEx instance and return the result plus captured output. " +
 				"Call reference(query) first; do not guess the API. State (variables, methods, types, usings) persists across calls in this session. " +
 				"A trailing expression (no semicolon) is returned. Globals: Modules, Types(), Type(), Methods(), Method(), Decompile(), IL(), XrefsTo(), Callers(), Strings(), Load(), GoTo(), Current, Save(), Debugger, Resolve<T>(), UI(() => ...). " +
@@ -63,26 +64,31 @@ namespace dnSpy.Mcp.Server {
 					["reset"] = Prop("boolean", "Discard all script state from previous calls before running (default false)"),
 					["max_output_chars"] = Prop("integer", $"Truncate output/result text beyond this many characters (default {DefaultMaxOutputChars})"),
 				}, "code"),
-			Tool("reference",
+			Tool("reference", "Look up API reference",
+				readOnlyHint: true, destructiveHint: false, openWorldHint: false,
 				"Look up the dnSpy scripting API and return a plain-text reference. Query a topic (overview, globals, dnlib, xrefs, editing, debugger, ui, recipes), " +
 				"a type (TypeDef, MethodDef, CilBody, Instruction, IDsDocumentService, DbgManager...), a member (\"TypeDef.Methods\", \"ScriptGlobals.Decompile\") or any keyword.",
 				new JsonObject {
 					["query"] = Prop("string", "Topic, type, member or keyword. Empty for the overview."),
 				}),
-			Tool("list_documents",
+			Tool("list_documents", "List documents",
+				readOnlyHint: true, destructiveHint: false, openWorldHint: false,
 				"List the assemblies/modules currently loaded in dnSpy with their file paths, plus what the user has open (active tab and selection).",
 				new JsonObject()),
-			Tool("open_assembly",
+			Tool("open_assembly", "Open assembly",
+				readOnlyHint: false, destructiveHint: false, openWorldHint: false,
 				"Open an assembly/module file in dnSpy (like File > Open). Returns the loaded module. Already-open files are reused.",
 				new JsonObject {
 					["path"] = Prop("string", "Absolute path of the .dll/.exe/.netmodule to open"),
 				}, "path"),
-			Tool("close_assembly",
+			Tool("close_assembly", "Close assembly",
+				readOnlyHint: false, destructiveHint: true, openWorldHint: false,
 				"Close (unload) an assembly from dnSpy.",
 				new JsonObject {
 					["name"] = Prop("string", "Assembly name, module name, file name or full path"),
 				}, "name"),
-			Tool("save_module",
+			Tool("save_module", "Save module",
+				readOnlyHint: false, destructiveHint: true, openWorldHint: false,
 				"Write a (possibly edited) module to disk. Defaults to overwriting the original file.",
 				new JsonObject {
 					["name"] = Prop("string", "Assembly name, module name, file name or full path of a loaded module"),
@@ -92,7 +98,8 @@ namespace dnSpy.Mcp.Server {
 
 		static JsonObject Prop(string type, string description) => new JsonObject { ["type"] = type, ["description"] = description };
 
-		static JsonObject Tool(string name, string description, JsonObject properties, params string[] required) {
+		static JsonObject Tool(string name, string title, bool readOnlyHint, bool destructiveHint, bool openWorldHint,
+			string description, JsonObject properties, params string[] required) {
 			var schema = new JsonObject {
 				["type"] = "object",
 				["properties"] = properties,
@@ -101,8 +108,15 @@ namespace dnSpy.Mcp.Server {
 				schema["required"] = new JsonArray(required.Select(r => (JsonNode)JsonValue.Create(r)!).ToArray());
 			return new JsonObject {
 				["name"] = name,
+				["title"] = title,
 				["description"] = description,
 				["inputSchema"] = schema,
+				["annotations"] = new JsonObject {
+					["title"] = title,
+					["readOnlyHint"] = readOnlyHint,
+					["destructiveHint"] = destructiveHint,
+					["openWorldHint"] = openWorldHint,
+				},
 			};
 		}
 

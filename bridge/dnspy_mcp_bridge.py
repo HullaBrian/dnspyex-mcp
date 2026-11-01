@@ -35,19 +35,35 @@ INSTANCE_PROP = {
     "description": "Target dnSpy instance (process id from list_instances). Default: the current instance.",
 }
 
+
+def tool_metadata(title, *, read_only, destructive, open_world):
+    return {
+        "title": title,
+        "annotations": {
+            "title": title,
+            "readOnlyHint": read_only,
+            "destructiveHint": destructive,
+            "openWorldHint": open_world,
+        },
+    }
+
+
 BRIDGE_TOOLS = [
     {
         "name": "list_instances",
+        **tool_metadata("List instances", read_only=True, destructive=False, open_world=False),
         "description": "List running dnSpy instances that have the MCP extension, and which one is current.",
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "select_instance",
+        **tool_metadata("Select instance", read_only=False, destructive=False, open_world=False),
         "description": "Make a dnSpy instance the default target for subsequent tool calls.",
         "inputSchema": {"type": "object", "properties": {"instance": INSTANCE_PROP}, "required": ["instance"]},
     },
     {
         "name": "launch_dnspy",
+        **tool_metadata("Launch dnSpy", read_only=False, destructive=False, open_world=True),
         "description": "Start a new dnSpy instance (optionally opening files) and make it current. Needs DNSPY_PATH or dnspy_path.",
         "inputSchema": {
             "type": "object",
@@ -63,6 +79,7 @@ BRIDGE_TOOLS = [
 FALLBACK_REMOTE_TOOLS = [
     {
         "name": "execute_csharp",
+        **tool_metadata("Execute C#", read_only=False, destructive=True, open_world=True),
         "description": "Execute C# script code inside the running dnSpyEx instance. Call reference(query) first. "
                        "State persists across calls; a trailing expression is returned.",
         "inputSchema": {"type": "object", "properties": {
@@ -74,26 +91,31 @@ FALLBACK_REMOTE_TOOLS = [
     },
     {
         "name": "reference",
+        **tool_metadata("Look up API reference", read_only=True, destructive=False, open_world=False),
         "description": "Look up the dnSpy scripting API (topics, dnlib/dnSpy types and members).",
         "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
     },
     {
         "name": "list_documents",
+        **tool_metadata("List documents", read_only=True, destructive=False, open_world=False),
         "description": "List the assemblies loaded in dnSpy.",
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "open_assembly",
+        **tool_metadata("Open assembly", read_only=False, destructive=False, open_world=True),
         "description": "Open an assembly in dnSpy (launches dnSpy if none is running).",
         "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
     },
     {
         "name": "close_assembly",
+        **tool_metadata("Close assembly", read_only=False, destructive=True, open_world=False),
         "description": "Close an assembly in dnSpy.",
         "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
     },
     {
         "name": "save_module",
+        **tool_metadata("Save module", read_only=False, destructive=True, open_world=False),
         "description": "Write a module to disk.",
         "inputSchema": {"type": "object", "properties": {
             "name": {"type": "string"}, "output_path": {"type": "string"}}, "required": ["name"]},
@@ -195,11 +217,6 @@ class Bridge:
                 inst = Instance(info)
             if inst.alive():
                 found[inst.pid] = inst
-            else:
-                try:
-                    os.remove(path)  # stale: dnSpy crashed or was killed
-                except OSError:
-                    pass
         self.instances = found
         if self.current_pid not in found:
             # Default to the most recently started instance
@@ -254,6 +271,8 @@ class Bridge:
             schema = json.loads(json.dumps(t.get("inputSchema", {"type": "object", "properties": {}})))
             schema.setdefault("properties", {})["instance"] = INSTANCE_PROP
             t["inputSchema"] = schema
+            if t["name"] == "open_assembly":
+                t["annotations"] = {**t.get("annotations", {}), "openWorldHint": True}
         return BRIDGE_TOOLS + tools
 
     def call_tool(self, name, args):

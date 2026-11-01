@@ -44,9 +44,9 @@ namespace dnSpy.Mcp.Server {
 		}
 
 		public const string ServerInstructions =
-@"dnSpyEx MCP (code mode). You drive a live dnSpyEx instance by running C# script code.
+@"dnSpyEx MCP runs C# scripts in a live dnSpyEx instance.
 
-- `execute_csharp` runs C# (Roslyn scripting) inside dnSpy. State persists between calls: variables, functions, classes and usings carry over. A trailing expression without a semicolon is returned as the result; print(x) or Console.WriteLine also produce output.
+- `execute_csharp` runs C# (Roslyn scripting) inside dnSpy. Variables, functions, classes and usings persist across calls. A trailing expression without a semicolon is returned as the result; print(x) or Console.WriteLine also produce output.
 - Globals give you the loaded assemblies and dnSpy's features: Modules, Types(pattern), Type(name), Methods(pattern), Method(""Ns.Type::Name""), Decompile(x), IL(m), XrefsTo(x), Callers(x), Strings(pattern), DerivedTypes(t), Load(path), GoTo(x), Current/Selected, Save(module), Debugger, Resolve<T>(). dnlib.DotNet and dnlib.DotNet.Emit are imported.
 - Call `reference` before guessing an API. `reference(""overview"")` shows the globals and recipes; `reference(""TypeDef"")` or `reference(""ScriptGlobals.XrefsTo"")` shows signatures and docs for any dnlib/dnSpy type.
 - Results are capped (max_output_chars), so filter with LINQ (Where/Take/Select) instead of dumping whole modules.";

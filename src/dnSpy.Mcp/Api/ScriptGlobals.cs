@@ -92,6 +92,47 @@ namespace dnSpy.Mcp.Api {
 			}
 		}
 
+		/// <summary>
+		/// Loaded modules that are not part of dnSpy or the .NET framework, i.e. the files under analysis.
+		/// Helpers that take an optional module (Triage, Resources, Note, ...) default to the only one of these.
+		/// </summary>
+		public IReadOnlyList<ModuleDef> SampleModules => Modules.Where(IsSampleModule).ToList();
+
+		static readonly string[] frameworkDirs = new[] {
+			AppContext.BaseDirectory,
+			Path.GetDirectoryName(typeof(object).Assembly.Location) ?? "",
+			Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Microsoft.NET"),
+			Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet"),
+			Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Reference Assemblies"),
+			Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Reference Assemblies"),
+		}.Where(d => d.Length > 0).Select(d => Path.GetFullPath(d).TrimEnd('\\') + "\\").ToArray();
+
+		internal static bool IsSampleModule(ModuleDef m) {
+			var loc = m.Location;
+			if (string.IsNullOrEmpty(loc))
+				return true; // in-memory
+			string full;
+			try {
+				full = Path.GetFullPath(loc);
+			}
+			catch {
+				return true;
+			}
+			return !frameworkDirs.Any(d => full.StartsWith(d, StringComparison.OrdinalIgnoreCase));
+		}
+
+		/// <summary>The module to use when a helper's module argument is omitted: the only sample module.</summary>
+		ModuleDef DefaultModule(ModuleDef? module, string what) {
+			if (module is not null)
+				return module;
+			var samples = SampleModules;
+			if (samples.Count == 1)
+				return samples[0];
+			if (samples.Count == 0)
+				throw new ArgumentException($"{what}: no sample is loaded (only framework/dnSpy assemblies). Use Load(path) first, or pass a module.");
+			throw new ArgumentException($"{what}: several samples are loaded, pass a module: " + string.Join(", ", samples.Select(s => $"Module(\"{s.Name}\")")));
+		}
+
 		/// <summary>The document (file) that owns a module, or null.</summary>
 		public IDsDocument? DocumentOf(ModuleDef module) => AllDocuments().FirstOrDefault(d => d.ModuleDef == module);
 
@@ -142,7 +183,15 @@ namespace dnSpy.Mcp.Api {
 			});
 			if (doc is null)
 				throw new InvalidOperationException($"dnSpy could not open '{fullPath}'");
-			return doc.ModuleDef ?? throw new InvalidOperationException($"'{fullPath}' was opened but isn't a .NET module");
+			var module = doc.ModuleDef ?? throw new InvalidOperationException($"'{fullPath}' was opened but isn't a .NET module");
+			// Saved renames are also applied in the background on load; do it now so the caller sees them
+			try {
+				if (host.Annotations.ApplyRenames(module) > 0)
+					RefreshQuietly(module);
+			}
+			catch {
+			}
+			return module;
 		}
 
 		/// <summary>Closes a module/assembly (ModuleDef, AssemblyDef, IDsDocument or name) in dnSpy.</summary>

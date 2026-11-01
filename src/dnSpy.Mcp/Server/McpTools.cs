@@ -49,7 +49,9 @@ namespace dnSpy.Mcp.Server {
 - `execute_csharp` runs C# (Roslyn scripting) inside dnSpy. State persists between calls: variables, functions, classes and usings carry over. A trailing expression without a semicolon is returned as the result; print(x) or Console.WriteLine also produce output.
 - Globals give you the loaded assemblies and dnSpy's features: Modules, Types(pattern), Type(name), Methods(pattern), Method(""Ns.Type::Name""), Decompile(x), IL(m), XrefsTo(x), Callers(x), Strings(pattern), DerivedTypes(t), Load(path), GoTo(x), Current/Selected, Save(module), Debugger, Resolve<T>(). dnlib.DotNet and dnlib.DotNet.Emit are imported.
 - Call `reference` before guessing an API. `reference(""overview"")` shows the globals and recipes; `reference(""TypeDef"")` or `reference(""ScriptGlobals.XrefsTo"")` shows signatures and docs for any dnlib/dnSpy type.
-- Results are capped (max_output_chars), so filter with LINQ (Where/Take/Select) instead of dumping whole modules.";
+- Results are capped (max_output_chars), so filter with LINQ (Where/Take/Select) instead of dumping whole modules.
+- Malware / unknown binaries: start with the `triage` tool, then follow reference(""malware""). Payload helpers: Resources(), ResourceBytes(), InitializedArrays(), FieldData(), Identify(), Xor/AesDecrypt/Gunzip..., Dump(), LoadBytes() (opens a decrypted stage). Analyze statically: never Assembly.Load or invoke code from the sample.
+- Record findings as you go with Rename(x, name), Comment(x, text), Note(text). They persist per file (by SHA-256) across sessions and dnSpy restarts; Annotations() shows earlier work, and list_documents says when there is some.";
 
 		public JsonArray ListTools() => new JsonArray {
 			Tool("execute_csharp",
@@ -82,6 +84,15 @@ namespace dnSpy.Mcp.Server {
 				new JsonObject {
 					["name"] = Prop("string", "Assembly name, module name, file name or full path"),
 				}, "name"),
+			Tool("triage",
+				"Malware/unknown-binary triage of a .NET module in one call: hashes and PE facts, obfuscation indicators, probable string decryptors, " +
+				"P/Invokes and notable APIs by category (dynamic loading, injection, network, crypto, persistence, anti-analysis...) with callers, " +
+				"categorized strings (URLs, IPs, registry, commands, credential targets, base64 blobs), possible embedded payloads, earlier notes, and where to start. " +
+				"Opens the file first if given a path. Same as execute_csharp `Triage(module)`, whose result also exposes the raw lists.",
+				new JsonObject {
+					["target"] = Prop("string", "Path of a file to open, or the name of a loaded module. Optional when exactly one sample is loaded."),
+					["max_per_category"] = Prop("integer", "Max items listed per category (default 12)"),
+				}),
 			Tool("save_module",
 				"Write a (possibly edited) module to disk. Defaults to overwriting the original file.",
 				new JsonObject {
@@ -130,6 +141,16 @@ namespace dnSpy.Mcp.Server {
 						var loc = mod.Location;
 						g.Unload(mod);
 						return $"Closed {loc}";
+					});
+				}
+				case "triage": {
+					var target = GetString(args, "target");
+					var max = (int)Math.Clamp(GetDouble(args, "max_per_category") ?? 12, 1, 1000);
+					return RunWithGlobals(g => {
+						ModuleDef? mod = null;
+						if (!string.IsNullOrWhiteSpace(target))
+							mod = File.Exists(target) ? g.Load(target) : g.Module(target);
+						return g.Triage(mod, max).ToText();
 					});
 				}
 				case "save_module": {
@@ -215,8 +236,17 @@ namespace dnSpy.Mcp.Server {
 					continue;
 				}
 				var kind = doc.IsAutoLoaded ? ", auto-loaded" : string.Empty;
-				sb.AppendLine($"- {mod.Assembly?.FullName ?? mod.Name.String}  [{mod.RuntimeVersion}{kind}]");
+				bool sample = ScriptGlobals.IsSampleModule(mod);
+				sb.AppendLine($"- {mod.Assembly?.FullName ?? mod.Name.String}  [{mod.RuntimeVersion}{kind}{(sample ? ", sample" : "")}]");
 				sb.AppendLine($"    {doc.Filename}");
+				if (sample) {
+					try {
+						if (g.Host.Annotations.TryGet(mod) is SampleAnnotations a)
+							sb.AppendLine($"    earlier work: {a.Notes.Count} notes, {a.Renames.Count} renames, {a.Comments.Count} comments -> Annotations(Module(\"{mod.Name}\"))");
+					}
+					catch {
+					}
+				}
 			}
 			try {
 				var current = g.Current;

@@ -11,6 +11,12 @@ using dnlib.DotNet.Emit;
 using dnSpy.Contracts.Documents;
 
 namespace dnSpy.Mcp.Api {
+	/// <summary>A result that renders as multi-line text (reports, summaries).</summary>
+	public interface IReport {
+		/// <summary>The full text of the report.</summary>
+		string ToText();
+	}
+
 	/// <summary>Turns script results into text that is useful to an agent.</summary>
 	public static class ResultFormatter {
 		public static string Format(object? value, int maxItems = 200) {
@@ -19,6 +25,8 @@ namespace dnSpy.Mcp.Api {
 				return "null";
 			case string s:
 				return s;
+			case IReport r:
+				return r.ToText();
 			case IDictionary dict:
 				return FormatDictionary(dict, maxItems);
 			case IEnumerable seq when !IsScalar(value):

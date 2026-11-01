@@ -2,7 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using System.Diagnostics;
+using System.Linq;
+using System.Threading.Tasks;
 using System.Windows.Threading;
+using dnlib.DotNet;
+using dnSpy.Contracts.Documents;
 using dnSpy.Contracts.Extension;
 using dnSpy.Contracts.Scripting;
 using dnSpy.Mcp.Api;
@@ -48,6 +52,7 @@ namespace dnSpy.Mcp {
 				server = McpHttpServer.StartOnFreePort(tools, config);
 				registry = new InstanceRegistry(server.Port, server.RequiresToken, server.Endpoint);
 				registry.Register();
+				HookAnnotations(host);
 				if (config.SettingsFile is not null)
 					host.Log($"MCP settings: {config.SettingsFile}");
 				host.Log($"MCP server listening on {server.Endpoint}{(server.RequiresToken ? " (bearer token required)" : "")}");
@@ -67,6 +72,48 @@ namespace dnSpy.Mcp {
 				catch {
 				}
 			}
+		}
+
+		/// <summary>Re-applies persisted renames to every sample module dnSpy opens (by the agent or the user).</summary>
+		static void HookAnnotations(DnSpyHost host) {
+			void Apply(IEnumerable<IDsDocument> docs) {
+				var list = docs.ToList();
+				Task.Run(() => {
+					int total = 0;
+					var stack = new Stack<IDsDocument>(list);
+					while (stack.Count > 0) {
+						var doc = stack.Pop();
+						try {
+							foreach (var child in doc.Children)
+								stack.Push(child);
+						}
+						catch {
+						}
+						if (doc.ModuleDef is not ModuleDef mod || !ScriptGlobals.IsSampleModule(mod))
+							continue;
+						try {
+							int n = host.Annotations.ApplyRenames(mod);
+							if (n > 0) {
+								total += n;
+								host.Log($"Applied {n} saved rename(s) to {mod.Location}");
+							}
+						}
+						catch (Exception ex) {
+							host.Log($"Could not apply annotations to {mod.Location}: {ex.Message}");
+						}
+					}
+					if (total > 0)
+						host.Dispatcher.BeginInvoke(() => {
+							host.DocumentTreeView.TreeView.RefreshAllNodes();
+							host.DocumentTabService.Refresh(host.DocumentTabService.VisibleFirstTabs.ToArray());
+						});
+				});
+			}
+			host.DocumentService.CollectionChanged += (s, e) => {
+				if (e.Type == NotifyDocumentCollectionType.Add)
+					Apply(e.Documents);
+			};
+			Apply(host.DocumentService.GetDocuments());
 		}
 
 		void Stop() {

@@ -73,11 +73,17 @@ namespace dnSpy.Mcp.Api {
 			if (string.IsNullOrEmpty(target))
 				throw new ArgumentException("Module has no file location; pass a path.");
 			var ms = new MemoryStream();
+			Metadata? metadata = null;
+			void OnWriterEvent(object? s, ModuleWriterEventArgs e) {
+				if (e.Event == ModuleWriterEvent.MDEndCreateTables)
+					metadata = e.Writer.Metadata;
+			}
 			if (module is ModuleDefMD md && !md.IsILOnly) {
 				var opts = new NativeModuleWriterOptions(md, optimizeImageSize: true);
 				if (preserveTokens)
 					opts.MetadataOptions.Flags |= MetadataFlags.PreserveAll;
 				opts.MetadataOptions.Flags |= MetadataFlags.KeepOldMaxStack;
+				opts.WriterEvent += OnWriterEvent;
 				md.NativeWrite(ms, opts);
 			}
 			else {
@@ -85,14 +91,35 @@ namespace dnSpy.Mcp.Api {
 				if (preserveTokens)
 					opts.MetadataOptions.Flags |= MetadataFlags.PreserveAll;
 				opts.MetadataOptions.Flags |= MetadataFlags.KeepOldMaxStack;
+				opts.WriterEvent += OnWriterEvent;
 				module.Write(ms, opts);
+			}
+			var bytes = ms.ToArray();
+			// Annotations are keyed by file hash + token: carry them over to the new file
+			if (metadata is not null) {
+				try {
+					host.Annotations.CopyToSavedFile(module, bytes, target, oldToken => {
+						if (module.ResolveToken(oldToken) is not IMDTokenProvider def)
+							return null;
+						try {
+							var t = metadata.GetToken(def);
+							return t.Rid == 0 ? null : t.Raw;
+						}
+						catch {
+							return null;
+						}
+					});
+				}
+				catch (Exception ex) {
+					host.Log($"Could not copy annotations to {target}: {ex.Message}");
+				}
 			}
 			// The file may be memory-mapped by any loaded document; release the mapping first
 			foreach (var doc in AllDocuments()) {
 				if (doc.PEImage is IPEImage pe && string.Equals(Path.GetFullPath(pe.Filename ?? ""), target, StringComparison.OrdinalIgnoreCase))
 					(pe as IInternalPEImage)?.UnsafeDisableMemoryMappedIO();
 			}
-			File.WriteAllBytes(target, ms.ToArray());
+			File.WriteAllBytes(target, bytes);
 			return target;
 		}
 

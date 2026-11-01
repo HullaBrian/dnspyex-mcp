@@ -165,6 +165,11 @@ namespace dnSpy.Mcp.Server {
 			var result = await session.GetScript(host).ExecuteAsync(code, timeout, maxChars, reset).ConfigureAwait(false);
 
 			var sb = new StringBuilder();
+			if (!result.Success) {
+				sb.AppendLine($"[error: {result.ErrorKind}]");
+				sb.AppendLine(result.Error);
+				sb.AppendLine();
+			}
 			if (result.SessionWasReset)
 				sb.AppendLine("[note: the previous script timed out, so the session state was reset]");
 			if (result.Stdout.Length > 0) {
@@ -187,12 +192,6 @@ namespace dnSpy.Mcp.Server {
 					sb.AppendLine();
 				sb.AppendLine($"[result: {typeName}]");
 				sb.AppendLine(formatted);
-			}
-			if (!result.Success) {
-				if (sb.Length > 0)
-					sb.AppendLine();
-				sb.AppendLine($"[error: {result.ErrorKind}]");
-				sb.AppendLine(result.Error);
 			}
 			if (sb.Length == 0)
 				sb.AppendLine("[ok: no output; end with an expression (no semicolon) to return a value]");

@@ -60,36 +60,50 @@ namespace dnSpy.Mcp.Server {
 				"Top-level await is supported. Check Token.IsCancellationRequested in long loops.",
 				new JsonObject {
 					["code"] = Prop("string", "C# script code. Example: `Types(\"Crypto\").Select(t => t.FullName)` or `Decompile(Method(\"App.License::Validate\"))`"),
-					["timeout_seconds"] = Prop("number", $"Execution timeout in seconds (default {DefaultTimeoutSeconds})"),
+					["timeout_seconds"] = Prop("number", $"Execution timeout in seconds (default {DefaultTimeoutSeconds}). Clamped to 1–86400 inclusive; fractional seconds are allowed."),
 					["reset"] = Prop("boolean", "Discard all script state from previous calls before running (default false)"),
-					["max_output_chars"] = Prop("integer", $"Truncate output/result text beyond this many characters (default {DefaultMaxOutputChars})"),
+					["max_output_chars"] = Prop("integer", $"Truncate output/result text beyond this many characters (default {DefaultMaxOutputChars}). Clamped to 1000–10000000 inclusive."),
 				}, "code"),
 			Tool("reference", "Look up API reference",
 				readOnlyHint: true, destructiveHint: false, openWorldHint: false,
-				"Look up the dnSpy scripting API and return a plain-text reference. Query a topic (overview, globals, dnlib, xrefs, editing, debugger, ui, recipes), " +
-				"a type (TypeDef, MethodDef, CilBody, Instruction, IDsDocumentService, DbgManager...), a member (\"TypeDef.Methods\", \"ScriptGlobals.Decompile\") or any keyword.",
+				"Look up a dnSpy scripting API reference before writing execute_csharp code or when an API name is unclear. " +
+				"The query accepts a topic (overview, globals, dnlib, xrefs, editing, debugger, ui, recipes), a type (TypeDef), a member (TypeDef.Methods), or a keyword; omit it for the overview. " +
+				"Returns plain-text documentation, signatures, or search matches that you can narrow with a type or member query. " +
+				"This describes the scripting API; use list_documents or execute_csharp to inspect loaded assemblies and their code.",
 				new JsonObject {
-					["query"] = Prop("string", "Topic, type, member or keyword. Empty for the overview."),
+					["query"] = Prop("string", "Topic, type, member or keyword. Omit or leave empty for the overview."),
 				}),
 			Tool("list_documents", "List documents",
 				readOnlyHint: true, destructiveHint: false, openWorldHint: false,
-				"List the assemblies/modules currently loaded in dnSpy with their file paths, plus what the user has open (active tab and selection).",
+				"List documents currently loaded in dnSpy, including assembly/module identities and file paths. " +
+				"Use this to identify a loaded module before inspecting, saving, or closing it. " +
+				"Returns a document count and plain-text listing, with the active tab and tree selection when available. " +
+				"It does not list types or decompile code; use execute_csharp for those details.",
 				new JsonObject()),
 			Tool("open_assembly", "Open assembly",
 				readOnlyHint: false, destructiveHint: false, openWorldHint: false,
-				"Open an assembly/module file in dnSpy (like File > Open). Returns the loaded module. Already-open files are reused.",
+				"Open an assembly or module in dnSpy from an absolute path on the machine running dnSpy. " +
+				"Use this to load a .dll, .exe, or .netmodule for inspection; already-open files are reused. " +
+				"Returns a plain-text summary with the module name, path, assembly identity, and type count. " +
+				"It does not return decompiled code; use execute_csharp after loading to inspect types and methods.",
 				new JsonObject {
 					["path"] = Prop("string", "Absolute path of the .dll/.exe/.netmodule to open"),
 				}, "path"),
 			Tool("close_assembly", "Close assembly",
 				readOnlyHint: false, destructiveHint: true, openWorldHint: false,
-				"Close (unload) an assembly from dnSpy.",
+				"Close an assembly or module loaded in dnSpy, identified by assembly name, module name, file name, or full path. " +
+				"Use list_documents first if the target is unclear. " +
+				"Removes the top-level document containing the module and returns a plain-text confirmation with the module's path. " +
+				"It does not save edits or delete the file on disk; use save_module first if edits must be preserved.",
 				new JsonObject {
 					["name"] = Prop("string", "Assembly name, module name, file name or full path"),
 				}, "name"),
 			Tool("save_module", "Save module",
 				readOnlyHint: false, destructiveHint: true, openWorldHint: false,
-				"Write a (possibly edited) module to disk. Defaults to overwriting the original file.",
+				"Save a loaded module to disk, including any in-memory edits. " +
+				"Use this after editing with execute_csharp or to write a copy of a loaded module; identify the target by assembly name, module name, file name, or full path. " +
+				"The output_path selects the destination on the machine running dnSpy; omitting it overwrites the module's original file, so supply a new path to preserve the original. " +
+				"Returns a plain-text confirmation with the written path, not the file contents or decompiled source.",
 				new JsonObject {
 					["name"] = Prop("string", "Assembly name, module name, file name or full path of a loaded module"),
 					["output_path"] = Prop("string", "Where to write it (default: overwrite the module's own file)"),

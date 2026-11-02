@@ -15,7 +15,7 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <DnSpyBin Condition=" '$(DnSpyBin)' == '' ">$(MSBuildThisFileDirectory)..\..\.tools\dnSpy\bin</DnSpyBin>

@@ -279,7 +279,7 @@ class Instance:
         self._raw_request("initialize", {
             "protocolVersion": PROTOCOL_VERSIONS[0],
             "capabilities": {},
-            "clientInfo": {"name": "dnspy-mcp-bridge", "version": "0.1.0"},
+            "clientInfo": {"name": "dnspy-mcp-bridge", "version": "0.2.0"},
         }, timeout=15)
         self._post({"jsonrpc": "2.0", "method": "notifications/initialized"}, timeout=15)
 
@@ -441,7 +441,7 @@ class Bridge:
         return {
             "protocolVersion": version,
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "dnspy", "title": "dnSpyEx (bridge)", "version": "0.1.0"},
+            "serverInfo": {"name": "dnspy", "title": "dnSpyEx (bridge)", "version": "0.2.0"},
             "instructions": DEFAULT_INSTRUCTIONS + BRIDGE_INSTRUCTIONS_SUFFIX,
         }
 

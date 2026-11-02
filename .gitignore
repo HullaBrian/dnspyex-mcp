@@ -4,3 +4,4 @@ obj/
 *.user
 .vs/
 __pycache__/
+tests/samples/out/

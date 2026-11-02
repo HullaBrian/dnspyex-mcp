@@ -23,6 +23,7 @@ namespace dnSpy.Mcp.Api {
 				CancellationToken = Token,
 				GetDisableAssemblyLoad = () => host.DocumentService.DisableAssemblyLoad(),
 			};
+			string header = string.Empty;
 			switch (target) {
 			case AssemblyDef asm:
 				decompiler.Decompile(asm, output, ctx);
@@ -31,7 +32,13 @@ namespace dnSpy.Mcp.Api {
 				decompiler.Decompile(mod, output, ctx);
 				break;
 			default:
-				switch (Def(target)) {
+				var def = Def(target);
+				try {
+					header = CommentHeader(def);
+				}
+				catch {
+				}
+				switch (def) {
 				case TypeDef t:
 					decompiler.Decompile(t, output, ctx);
 					break;
@@ -52,7 +59,7 @@ namespace dnSpy.Mcp.Api {
 				}
 				break;
 			}
-			return output.ToString();
+			return header + output.ToString();
 		}
 
 		/// <summary>Decompiles every type of a namespace in a module.</summary>
@@ -95,6 +102,8 @@ namespace dnSpy.Mcp.Api {
 				return sb.ToString();
 			}
 			var body = m.Body;
+			sb.Append(CommentHeader(m, includeOffsets: false));
+			var offsetComments = OffsetComments(m);
 			sb.AppendLine($"// maxstack {body.MaxStack}, initlocals {body.InitLocals}, code size {body.GetCodeSize()} bytes");
 			if (body.Variables.Count > 0) {
 				sb.AppendLine("// locals:");
@@ -105,6 +114,8 @@ namespace dnSpy.Mcp.Api {
 			foreach (var instr in body.Instructions) {
 				foreach (var h in handlersByStart[instr])
 					sb.AppendLine($"  // .try IL_{h.TryStart?.Offset:X4}-IL_{h.TryEnd?.Offset ?? (uint)body.GetCodeSize():X4} {DescribeHandler(h)}");
+				if (offsetComments.TryGetValue(instr.Offset, out var note))
+					sb.AppendLine("  // NOTE: " + note.Replace("\n", "\n  //       "));
 				sb.Append("  ").AppendLine(instr.ToString());
 			}
 			return sb.ToString();

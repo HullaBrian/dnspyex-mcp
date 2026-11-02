@@ -34,6 +34,16 @@ UI
   GoTo(x, newTab=false)                Refresh(module?) after edits
 Editing / saving
   Edit with dnlib directly (see reference("editing")), then Refresh() and Save(module, path?)
+Malware analysis (details: reference("malware"))
+  Triage(module?)                       one-call report; also the `triage` tool
+  Resources(), ResourceBytes(), InitializedArrays(), FieldData(), Identify(), Entropy(), Hex()
+  Xor, Rc4, AesDecrypt, DesDecrypt, Pbkdf2, Gunzip, Inflate, Zlib, FromBase64, FromHex, Hash
+  Dump(bytes, name), DumpResource(name), LoadBytes(bytes, name)   LoadBytes opens a decrypted stage in dnSpy
+  SampleModules                         loaded files that aren't framework/dnSpy assemblies (default module for these helpers)
+Annotations (persist per file SHA-256, re-applied when the file is opened)
+  Rename(x, name), RenameParameter(m, i, name), Unrename(x)
+  Comment(x, text, ilOffset?)           shows up in Decompile()/IL() output
+  Note(text), Notes(), DeleteNote(i), Annotations()
 Escape hatches
   Resolve<T>() / TryResolve<T>()        any dnSpy MEF service (IDocumentTabService, IDecompilerService, ...)
   UI(() => ...)                          run on the UI thread (needed for WPF objects)

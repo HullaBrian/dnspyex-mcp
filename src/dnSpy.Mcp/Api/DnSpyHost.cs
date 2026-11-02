@@ -41,6 +41,9 @@ namespace dnSpy.Mcp.Api {
 		public IDocumentTreeView DocumentTreeView => DocumentTabService.DocumentTreeView;
 		public IDecompilerService DecompilerService => decompilerService.Value;
 
+		/// <summary>Persisted renames/comments/notes, shared by all sessions.</summary>
+		public AnnotationStore Annotations { get; } = new AnnotationStore();
+
 		public T Resolve<T>() where T : class => serviceLocator.Resolve<T>();
 		public T? TryResolve<T>() where T : class => serviceLocator.TryResolve<T>();
 

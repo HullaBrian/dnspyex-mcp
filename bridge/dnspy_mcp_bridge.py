@@ -35,24 +35,56 @@ INSTANCE_PROP = {
     "description": "Target dnSpy instance (process id from list_instances). Default: the current instance.",
 }
 
+
+def tool_metadata(title, *, read_only, destructive, open_world):
+    return {
+        "title": title,
+        "annotations": {
+            "title": title,
+            "readOnlyHint": read_only,
+            "destructiveHint": destructive,
+            "openWorldHint": open_world,
+        },
+    }
+
+
 BRIDGE_TOOLS = [
     {
         "name": "list_instances",
-        "description": "List running dnSpy instances that have the MCP extension, and which one is current.",
+        **tool_metadata("List instances", read_only=True, destructive=False, open_world=False),
+        "description": (
+            "List running dnSpy instances registered with the local MCP bridge. "
+            "Use this to find a process id before selecting an instance or targeting a tool call. "
+            "Returns reachable instances with their process ids, endpoints, start times, executable paths, and a marker for the current instance. "
+            "It does not list loaded assemblies or discover arbitrary remote hosts; use list_documents for assemblies."
+        ),
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "select_instance",
-        "description": "Make a dnSpy instance the default target for subsequent tool calls.",
+        **tool_metadata("Select instance", read_only=False, destructive=False, open_world=False),
+        "description": (
+            "Select a running dnSpy instance as this bridge's default target for subsequent tool calls. "
+            "Pass an instance process id from list_instances and use this when several dnSpy windows are running. "
+            "Returns a plain-text confirmation of the selected process id. "
+            "It does not launch dnSpy or move script state between instances; to target only one call, pass that tool's optional instance argument instead."
+        ),
         "inputSchema": {"type": "object", "properties": {"instance": INSTANCE_PROP}, "required": ["instance"]},
     },
     {
         "name": "launch_dnspy",
-        "description": "Start a new dnSpy instance (optionally opening files) and make it current. Needs DNSPY_PATH or dnspy_path.",
+        **tool_metadata("Launch dnSpy", read_only=False, destructive=False, open_world=True),
+        "description": (
+            "Launch a new dnSpy process and make the detected MCP instance the bridge's current target. "
+            "Use this when a new process is needed; use select_instance to work with an existing one. "
+            "The dnspy_path selects dnSpy.exe (default: DNSPY_PATH), and paths optionally supplies files to open on that machine. "
+            "Waits up to 90 seconds for MCP registration and returns the process id and endpoint. "
+            "A registration timeout can leave the process running; check list_instances before launching again."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "paths": {"type": "array", "items": {"type": "string"}, "description": "Files to open"},
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Files to open in the new dnSpy instance. Default: no files."},
                 "dnspy_path": {"type": "string", "description": "Path to dnSpy.exe (default: DNSPY_PATH env var)"},
             },
         },
@@ -63,40 +95,110 @@ BRIDGE_TOOLS = [
 FALLBACK_REMOTE_TOOLS = [
     {
         "name": "execute_csharp",
-        "description": "Execute C# script code inside the running dnSpyEx instance. Call reference(query) first. "
-                       "State persists across calls; a trailing expression is returned.",
+        **tool_metadata("Execute C#", read_only=False, destructive=True, open_world=True),
+        "description": (
+            "Execute C# script code inside the running dnSpyEx instance and return the result plus captured output. "
+            "Call reference(query) first; do not guess the API. State (variables, methods, types, usings) persists across calls in this session. "
+            "A trailing expression (no semicolon) is returned. Globals: Modules, Types(), Type(), Methods(), Method(), Decompile(), IL(), XrefsTo(), Callers(), Strings(), Load(), GoTo(), Current, Save(), Debugger, Resolve<T>(), UI(() => ...). "
+            "Top-level await is supported. Check Token.IsCancellationRequested in long loops."
+        ),
         "inputSchema": {"type": "object", "properties": {
-            "code": {"type": "string"},
-            "timeout_seconds": {"type": "number"},
-            "reset": {"type": "boolean"},
-            "max_output_chars": {"type": "integer"},
+            "code": {
+                "type": "string",
+                "description": 'C# script code. Example: `Types("Crypto").Select(t => t.FullName)` or `Decompile(Method("App.License::Validate"))`',
+            },
+            "timeout_seconds": {
+                "type": "number",
+                "description": "Execution timeout in seconds (default 120). Clamped to 1–86400 inclusive; fractional seconds are allowed.",
+            },
+            "reset": {
+                "type": "boolean",
+                "description": "Discard all script state from previous calls before running (default false)",
+            },
+            "max_output_chars": {
+                "type": "integer",
+                "description": "Truncate output/result text beyond this many characters (default 60000). Clamped to 1000–10000000 inclusive.",
+            },
         }, "required": ["code"]},
     },
     {
         "name": "reference",
-        "description": "Look up the dnSpy scripting API (topics, dnlib/dnSpy types and members).",
-        "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
+        **tool_metadata("Look up API reference", read_only=True, destructive=False, open_world=False),
+        "description": (
+            "Look up a dnSpy scripting API reference before writing execute_csharp code or when an API name is unclear. "
+            "The query accepts a topic (overview, globals, dnlib, xrefs, editing, debugger, ui, recipes), a type (TypeDef), a member (TypeDef.Methods), or a keyword; omit it for the overview. "
+            "Returns plain-text documentation, signatures, or search matches that you can narrow with a type or member query. "
+            "This describes the scripting API; use list_documents or execute_csharp to inspect loaded assemblies and their code."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "Topic, type, member or keyword. Omit or leave empty for the overview."},
+        }},
     },
     {
         "name": "list_documents",
-        "description": "List the assemblies loaded in dnSpy.",
+        **tool_metadata("List documents", read_only=True, destructive=False, open_world=False),
+        "description": (
+            "List documents currently loaded in dnSpy, including assembly/module identities and file paths. "
+            "Use this to identify a loaded module before inspecting, saving, or closing it. "
+            "Returns a document count and plain-text listing, with the active tab and tree selection when available. "
+            "It does not list types or decompile code; use execute_csharp for those details."
+        ),
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
         "name": "open_assembly",
-        "description": "Open an assembly in dnSpy (launches dnSpy if none is running).",
-        "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+        **tool_metadata("Open assembly", read_only=False, destructive=False, open_world=True),
+        "description": (
+            "Open an assembly or module in dnSpy from an absolute path on the machine running dnSpy. "
+            "Use this to load a .dll, .exe, or .netmodule for inspection; already-open files are reused. "
+            "Returns a plain-text summary with the module name, path, assembly identity, and type count. "
+            "It does not return decompiled code; use execute_csharp after loading to inspect types and methods. "
+            "If no instance is running and no instance argument is supplied, the bridge launches dnSpy using DNSPY_PATH."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "path": {"type": "string", "description": "Absolute path of the .dll/.exe/.netmodule to open"},
+        }, "required": ["path"]},
     },
     {
         "name": "close_assembly",
-        "description": "Close an assembly in dnSpy.",
-        "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+        **tool_metadata("Close assembly", read_only=False, destructive=True, open_world=False),
+        "description": (
+            "Close an assembly or module loaded in dnSpy, identified by assembly name, module name, file name, or full path. "
+            "Use list_documents first if the target is unclear. "
+            "Removes the top-level document containing the module and returns a plain-text confirmation with the module's path. "
+            "It does not save edits or delete the file on disk; use save_module first if edits must be preserved."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "Assembly name, module name, file name or full path"},
+        }, "required": ["name"]},
+    },
+    {
+        "name": "triage",
+        **tool_metadata("Triage module", read_only=False, destructive=False, open_world=False),
+        "description": (
+            "Malware/unknown-binary triage of a .NET module in one call: hashes and PE facts, obfuscation indicators, "
+            "probable string decryptors, P/Invokes and notable APIs by category with callers, categorized strings, "
+            "possible embedded payloads, earlier notes, and where to start. Static analysis only: sample code is never executed. "
+            "Opens the file first if given a path. Same as execute_csharp `Triage(module)`."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "target": {"type": "string", "description": "Path of a file to open, or the name of a loaded module. Optional when exactly one sample is loaded."},
+            "max_per_category": {"type": "integer", "description": "Max items listed per category (default 12). Clamped to 1–1000 inclusive."},
+        }},
     },
     {
         "name": "save_module",
-        "description": "Write a module to disk.",
+        **tool_metadata("Save module", read_only=False, destructive=True, open_world=False),
+        "description": (
+            "Save a loaded module to disk, including any in-memory edits. "
+            "Use this after editing with execute_csharp or to write a copy of a loaded module; identify the target by assembly name, module name, file name, or full path. "
+            "The output_path selects the destination on the machine running dnSpy; omitting it overwrites the module's original file, so supply a new path to preserve the original. "
+            "Returns a plain-text confirmation with the written path, not the file contents or decompiled source."
+        ),
         "inputSchema": {"type": "object", "properties": {
-            "name": {"type": "string"}, "output_path": {"type": "string"}}, "required": ["name"]},
+            "name": {"type": "string", "description": "Assembly name, module name, file name or full path of a loaded module"},
+            "output_path": {"type": "string", "description": "Where to write it (default: overwrite the module's own file)"},
+        }, "required": ["name"]},
     },
 ]
 
@@ -107,6 +209,44 @@ def log(msg):
 
 class ToolError(Exception):
     pass
+
+
+def pid_exists(pid):
+    """True if a process with this pid is running (or we cannot tell)."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            # ERROR_INVALID_PARAMETER: no such process. Anything else (e.g. access denied): assume alive.
+            return ctypes.get_last_error() != 87
+        try:
+            code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            return code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
 
 
 class Instance:
@@ -195,9 +335,11 @@ class Bridge:
                 inst = Instance(info)
             if inst.alive():
                 found[inst.pid] = inst
-            else:
+            elif not pid_exists(inst.pid):
+                # Stale: dnSpy crashed or was killed. Only delete when the process is gone, so a live
+                # instance whose health check failed (slow, busy, token mismatch) keeps its registration.
                 try:
-                    os.remove(path)  # stale: dnSpy crashed or was killed
+                    os.remove(path)
                 except OSError:
                     pass
         self.instances = found
@@ -254,6 +396,8 @@ class Bridge:
             schema = json.loads(json.dumps(t.get("inputSchema", {"type": "object", "properties": {}})))
             schema.setdefault("properties", {})["instance"] = INSTANCE_PROP
             t["inputSchema"] = schema
+            if t["name"] == "open_assembly":
+                t["annotations"] = {**t.get("annotations", {}), "openWorldHint": True}
         return BRIDGE_TOOLS + tools
 
     def call_tool(self, name, args):
@@ -333,7 +477,9 @@ class Bridge:
 DEFAULT_INSTRUCTIONS = (
     "dnSpyEx MCP (code mode). You drive dnSpyEx by running C# script code with execute_csharp; state persists "
     "between calls and a trailing expression is returned. Call reference() before guessing an API "
-    "(reference(\"overview\") lists the globals: Modules, Types(), Method(), Decompile(), XrefsTo(), Strings(), ...)."
+    "(reference(\"overview\") lists the globals: Modules, Types(), Method(), Decompile(), XrefsTo(), Strings(), ...). "
+    "For malware or unknown binaries, start with triage and reference(\"malware\"); analyze statically and never "
+    "load or invoke sample code."
 )
 
 

@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 using dnlib.DotNet;
 
 namespace dnSpy.Mcp.Api {
@@ -66,6 +67,11 @@ namespace dnSpy.Mcp.Api {
 		// Cached per file hash, with the JSON file's write time so external edits/deletions are picked up
 		readonly Dictionary<string, (SampleAnnotations data, DateTime? stamp)> cache = new(StringComparer.OrdinalIgnoreCase);
 		readonly ConditionalWeakTable<ModuleDef, string> hashes = new();
+		// Modules whose file was overwritten by Save() with renumbered tokens: their in-memory tokens no
+		// longer match the file, so annotations can't be keyed until the file is reopened.
+		readonly ConditionalWeakTable<ModuleDef, string> staleModules = new();
+		// Serializes read-modify-write of the JSON files across dnSpy instances
+		static readonly Mutex fileMutex = new(false, @"Local\dnSpy.Mcp.annotations");
 
 		public string Directory { get; }
 
@@ -92,26 +98,41 @@ namespace dnSpy.Mcp.Api {
 			}
 		}
 
-		/// <summary>The annotations of a module's file. Returns an empty (unsaved) object if there are none.</summary>
+		string RequireKey(ModuleDef module) {
+			if (staleModules.TryGetValue(module, out var path))
+				throw new InvalidOperationException($"{module.Name} was saved over its own file ({path}) and its tokens were renumbered. " +
+					"Close and reopen it (close_assembly + open_assembly, or Unload + Load) before adding annotations; existing ones were carried over.");
+			return KeyOf(module) ?? throw new InvalidOperationException($"{module.Name} has no file on disk, so annotations can't be stored. Save it (Save(module, path)) and Load() that file.");
+		}
+
+		/// <summary>
+		/// A snapshot of the annotations of a module's file (an empty object if there are none). Changes to
+		/// the snapshot are not saved; use <see cref="Update"/>.
+		/// </summary>
 		public SampleAnnotations Get(ModuleDef module) {
-			var key = KeyOf(module) ?? throw new InvalidOperationException($"{module.Name} has no file on disk, so annotations can't be stored. Save it (Save(module, path)) and Load() that file.");
+			var key = RequireKey(module);
 			lock (lockObj) {
-				var a = GetByKey(key);
+				var a = Clone(GetByKey(key));
 				a.File = module.Location;
 				return a;
 			}
 		}
 
-		/// <summary>Annotations for a module if any exist, else null.</summary>
+		/// <summary>A snapshot of a module's annotations if any exist, else null.</summary>
 		public SampleAnnotations? TryGet(ModuleDef module) {
+			if (staleModules.TryGetValue(module, out _))
+				return null;
 			var key = KeyOf(module);
 			if (key is null)
 				return null;
 			lock (lockObj) {
 				var a = GetByKey(key);
-				return a.IsEmpty ? null : a;
+				return a.IsEmpty ? null : Clone(a);
 			}
 		}
+
+		static SampleAnnotations Clone(SampleAnnotations a) =>
+			JsonSerializer.Deserialize<SampleAnnotations>(JsonSerializer.Serialize(a, jsonOptions), jsonOptions)!;
 
 		DateTime? StampOf(string key) {
 			var path = PathOf(key);
@@ -142,11 +163,36 @@ namespace dnSpy.Mcp.Api {
 
 		/// <summary>Runs <paramref name="edit"/> on a module's annotations under the store lock, then saves them.</summary>
 		public T Update<T>(ModuleDef module, Func<SampleAnnotations, T> edit) {
-			var a = Get(module);
+			var key = RequireKey(module);
 			lock (lockObj) {
+				using var _ = LockFiles();
+				// Re-read inside the locks so edits made by other sessions/instances aren't lost
+				var a = GetByKey(key);
+				a.File = module.Location;
 				var result = edit(a);
 				Persist(a);
 				return result;
+			}
+		}
+
+		static IDisposable LockFiles() {
+			bool owned;
+			try {
+				owned = fileMutex.WaitOne(TimeSpan.FromSeconds(10));
+			}
+			catch (AbandonedMutexException) {
+				owned = true;
+			}
+			return new Releaser(owned);
+		}
+
+		sealed class Releaser : IDisposable {
+			bool owned;
+			public Releaser(bool owned) => this.owned = owned;
+			public void Dispose() {
+				if (owned)
+					fileMutex.ReleaseMutex();
+				owned = false;
 			}
 		}
 
@@ -161,7 +207,7 @@ namespace dnSpy.Mcp.Api {
 				}
 			}
 			else {
-				var tmp = path + ".tmp";
+				var tmp = $"{path}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
 				File.WriteAllText(tmp, JsonSerializer.Serialize(a, jsonOptions));
 				File.Move(tmp, path, overwrite: true);
 			}
@@ -173,11 +219,14 @@ namespace dnSpy.Mcp.Api {
 		/// original name). Returns the number of names changed.
 		/// </summary>
 		public int ApplyRenames(ModuleDef module) {
-			var a = TryGet(module);
-			if (a is null || a.Renames.Count == 0)
+			if (staleModules.TryGetValue(module, out _))
+				return 0;
+			var fileKey = KeyOf(module);
+			if (fileKey is null)
 				return 0;
 			int n = 0;
 			lock (lockObj) {
+				var a = GetByKey(fileKey);
 				foreach (var (key, r) in a.Renames) {
 					try {
 						if (AnnotationKeys.ApplyOne(module, key, r))
@@ -201,6 +250,7 @@ namespace dnSpy.Mcp.Api {
 				return;
 			var newKey = Convert.ToHexString(SHA256.HashData(savedBytes)).ToLowerInvariant();
 			lock (lockObj) {
+				using var _ = LockFiles();
 				var dst = GetByKey(newKey);
 				dst.File = savedPath;
 				dst.DerivedFrom = src.Sha256;
@@ -217,6 +267,21 @@ namespace dnSpy.Mcp.Api {
 						dst.Notes.Add(note);
 				}
 				Persist(dst);
+			}
+		}
+
+		/// <summary>
+		/// Called after Save() overwrote the module's own file. With preserved tokens the in-memory module
+		/// still matches the new file, so it is re-keyed; otherwise it is marked stale until reopened.
+		/// </summary>
+		internal void OnSavedInPlace(ModuleDef module, byte[] savedBytes, string savedPath, bool tokensPreserved) {
+			lock (lockObj) {
+				if (tokensPreserved) {
+					hashes.AddOrUpdate(module, Convert.ToHexString(SHA256.HashData(savedBytes)).ToLowerInvariant());
+					staleModules.Remove(module);
+				}
+				else
+					staleModules.AddOrUpdate(module, savedPath);
 			}
 		}
 	}

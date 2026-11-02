@@ -217,17 +217,28 @@ namespace dnSpy.Mcp.Api {
 		/// <see cref="DumpDirectory"/>; an existing file is not overwritten (a suffix is added).
 		/// </summary>
 		public string Dump(byte[] data, string name) {
+			if (string.IsNullOrWhiteSpace(name))
+				throw new ArgumentException("Dump(): name is empty");
 			string path;
-			if (Path.IsPathRooted(name))
-				path = name;
+			if (Path.IsPathFullyQualified(name))
+				path = Path.GetFullPath(name);
+			else if (Path.IsPathRooted(name))
+				throw new ArgumentException($"Dump(): '{name}' is drive- or root-relative; pass a full path or a bare file name");
 			else {
-				var safe = string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
+				var safe = string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c)).Trim();
+				if (safe.Trim('.').Length == 0)
+					safe = "dump.bin";
 				path = Path.Combine(DumpDirectory, safe);
 			}
-			Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+			var dir = Path.GetDirectoryName(path);
+			if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(Path.GetFileName(path)))
+				throw new ArgumentException($"Dump(): '{name}' doesn't name a file");
+			if (Directory.Exists(path))
+				throw new ArgumentException($"Dump(): '{path}' is a directory");
+			Directory.CreateDirectory(dir);
 			var unique = path;
 			for (int i = 1; File.Exists(unique); i++)
-				unique = Path.Combine(Path.GetDirectoryName(path)!, $"{Path.GetFileNameWithoutExtension(path)}_{i}{Path.GetExtension(path)}");
+				unique = Path.Combine(dir, $"{Path.GetFileNameWithoutExtension(path)}_{i}{Path.GetExtension(path)}");
 			File.WriteAllBytes(unique, data);
 			return unique;
 		}
@@ -430,7 +441,9 @@ namespace dnSpy.Mcp.Api {
 		/// <summary>Hex dump (offset, hex bytes, ASCII) of part of the data.</summary>
 		public string Hex(byte[] data, int offset = 0, int length = 256) {
 			var sb = new StringBuilder();
-			int end = Math.Min(data.Length, offset + length);
+			offset = Math.Clamp(offset, 0, data.Length);
+			length = Math.Max(0, length);
+			int end = (int)Math.Min(data.Length, (long)offset + length);
 			for (int row = offset; row < end; row += 16) {
 				sb.Append($"{row:X8}  ");
 				for (int i = 0; i < 16; i++)
@@ -505,16 +518,17 @@ namespace dnSpy.Mcp.Api {
 
 		/// <summary>
 		/// AES decryption. Mode "CBC" (default), "ECB" or "CFB"; padding "PKCS7" (default), "None", "Zeros".
-		/// The key length selects AES-128/192/256.
+		/// The key length selects AES-128/192/256. CFB uses <paramref name="cfbFeedbackBits"/> (8 = .NET Aes default,
+		/// 128 = RijndaelManaged default and most other libraries).
 		/// </summary>
-		public byte[] AesDecrypt(byte[] data, byte[] key, byte[]? iv = null, string mode = "CBC", string padding = "PKCS7") {
+		public byte[] AesDecrypt(byte[] data, byte[] key, byte[]? iv = null, string mode = "CBC", string padding = "PKCS7", int cfbFeedbackBits = 8) {
 			using var aes = Aes.Create();
 			aes.Key = key;
 			var pad = Enum.Parse<PaddingMode>(padding, ignoreCase: true);
 			return mode.ToUpperInvariant() switch {
 				"ECB" => aes.DecryptEcb(data, pad),
 				"CBC" => aes.DecryptCbc(data, iv ?? new byte[16], pad),
-				"CFB" => aes.DecryptCfb(data, iv ?? new byte[16], pad, 8),
+				"CFB" => aes.DecryptCfb(data, iv ?? new byte[16], pad, cfbFeedbackBits),
 				_ => throw new ArgumentException($"Unsupported mode {mode}"),
 			};
 		}
@@ -533,6 +547,8 @@ namespace dnSpy.Mcp.Api {
 
 		/// <summary>RC4 (also used as "ARC4") encryption/decryption.</summary>
 		public byte[] Rc4(byte[] data, byte[] key) {
+			if (key.Length == 0)
+				throw new ArgumentException("Empty key");
 			var s = new byte[256];
 			for (int i = 0; i < 256; i++)
 				s[i] = (byte)i;

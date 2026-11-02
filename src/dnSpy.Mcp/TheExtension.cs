@@ -76,10 +76,12 @@ namespace dnSpy.Mcp {
 
 		/// <summary>Re-applies persisted renames to every sample module dnSpy opens (by the agent or the user).</summary>
 		static void HookAnnotations(DnSpyHost host) {
+			// dnSpy documents (lazily built Children) and dnlib names are touched on the UI thread only;
+			// just the file hashing / JSON loading runs in the background.
 			void Apply(IEnumerable<IDsDocument> docs) {
 				var list = docs.ToList();
-				Task.Run(() => {
-					int total = 0;
+				host.Dispatcher.BeginInvoke(() => {
+					var mods = new List<ModuleDef>();
 					var stack = new Stack<IDsDocument>(list);
 					while (stack.Count > 0) {
 						var doc = stack.Pop();
@@ -89,24 +91,44 @@ namespace dnSpy.Mcp {
 						}
 						catch {
 						}
-						if (doc.ModuleDef is not ModuleDef mod || !ScriptGlobals.IsSampleModule(mod))
-							continue;
-						try {
-							int n = host.Annotations.ApplyRenames(mod);
-							if (n > 0) {
-								total += n;
-								host.Log($"Applied {n} saved rename(s) to {mod.Location}");
+						if (doc.ModuleDef is ModuleDef mod && ScriptGlobals.IsSampleModule(mod))
+							mods.Add(mod);
+					}
+					if (mods.Count == 0)
+						return;
+					Task.Run(() => {
+						var withRenames = new List<ModuleDef>();
+						foreach (var mod in mods) {
+							try {
+								if (host.Annotations.TryGet(mod) is { Renames.Count: > 0 })
+									withRenames.Add(mod);
+							}
+							catch (Exception ex) {
+								host.Log($"Could not read annotations of {mod.Location}: {ex.Message}");
 							}
 						}
-						catch (Exception ex) {
-							host.Log($"Could not apply annotations to {mod.Location}: {ex.Message}");
-						}
-					}
-					if (total > 0)
+						if (withRenames.Count == 0)
+							return;
 						host.Dispatcher.BeginInvoke(() => {
-							host.DocumentTreeView.TreeView.RefreshAllNodes();
-							host.DocumentTabService.Refresh(host.DocumentTabService.VisibleFirstTabs.ToArray());
+							int total = 0;
+							foreach (var mod in withRenames) {
+								try {
+									int n = host.Annotations.ApplyRenames(mod);
+									if (n > 0) {
+										total += n;
+										host.Log($"Applied {n} saved rename(s) to {mod.Location}");
+									}
+								}
+								catch (Exception ex) {
+									host.Log($"Could not apply annotations to {mod.Location}: {ex.Message}");
+								}
+							}
+							if (total > 0) {
+								host.DocumentTreeView.TreeView.RefreshAllNodes();
+								host.DocumentTabService.Refresh(host.DocumentTabService.VisibleFirstTabs.ToArray());
+							}
 						});
+					});
 				});
 			}
 			host.DocumentService.CollectionChanged += (s, e) => {

@@ -41,6 +41,9 @@ namespace dnSpy.Mcp.Api {
 					t.Namespace = entry.Namespace;
 				}
 				else {
+					// An earlier rename may have moved the type; a plain name puts it back in its original namespace
+					if (def is TypeDef t2 && entry.Namespace is not null)
+						t2.Namespace = entry.OriginalNamespace;
 					entry.Name = name;
 					entry.Namespace = null;
 				}

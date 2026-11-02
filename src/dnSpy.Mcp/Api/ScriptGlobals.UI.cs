@@ -120,6 +120,11 @@ namespace dnSpy.Mcp.Api {
 					(pe as IInternalPEImage)?.UnsafeDisableMemoryMappedIO();
 			}
 			File.WriteAllBytes(target, bytes);
+			// Overwrote the module's own file: its annotation key (file hash) changed, and without preserved
+			// tokens the in-memory tokens no longer match the file either
+			if (!string.IsNullOrEmpty(module.Location) &&
+				string.Equals(Path.GetFullPath(module.Location), target, StringComparison.OrdinalIgnoreCase))
+				host.Annotations.OnSavedInPlace(module, bytes, target, preserveTokens);
 			return target;
 		}
 

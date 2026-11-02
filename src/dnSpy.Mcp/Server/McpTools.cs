@@ -43,58 +43,81 @@ namespace dnSpy.Mcp.Server {
 			reference = new ReferenceProvider();
 		}
 
+		// Keep under 1000 bytes: Codex truncates/rejects longer server instructions. Put detail in reference topics.
 		public const string ServerInstructions =
-@"dnSpyEx MCP (code mode). You drive a live dnSpyEx instance by running C# script code.
+@"dnSpyEx MCP runs C# scripts in a live dnSpyEx instance.
 
-- `execute_csharp` runs C# (Roslyn scripting) inside dnSpy. State persists between calls: variables, functions, classes and usings carry over. A trailing expression without a semicolon is returned as the result; print(x) or Console.WriteLine also produce output.
-- Globals give you the loaded assemblies and dnSpy's features: Modules, Types(pattern), Type(name), Methods(pattern), Method(""Ns.Type::Name""), Decompile(x), IL(m), XrefsTo(x), Callers(x), Strings(pattern), DerivedTypes(t), Load(path), GoTo(x), Current/Selected, Save(module), Debugger, Resolve<T>(). dnlib.DotNet and dnlib.DotNet.Emit are imported.
-- Call `reference` before guessing an API. `reference(""overview"")` shows the globals and recipes; `reference(""TypeDef"")` or `reference(""ScriptGlobals.XrefsTo"")` shows signatures and docs for any dnlib/dnSpy type.
-- Results are capped (max_output_chars), so filter with LINQ (Where/Take/Select) instead of dumping whole modules.
-- Malware / unknown binaries: start with the `triage` tool, then follow reference(""malware""). Payload helpers: Resources(), ResourceBytes(), InitializedArrays(), FieldData(), Identify(), Xor/AesDecrypt/Gunzip..., Dump(), LoadBytes() (opens a decrypted stage). Analyze statically: never Assembly.Load or invoke code from the sample.
-- Record findings as you go with Rename(x, name), Comment(x, text), Note(text). They persist per file (by SHA-256) across sessions and dnSpy restarts; Annotations() shows earlier work, and list_documents says when there is some.";
+- `execute_csharp` runs Roslyn C# inside dnSpy. Variables, functions, classes and usings persist across calls; a trailing expression (no semicolon) is returned, print(x) also outputs.
+- Globals: Modules, Types(pattern), Type(name), Methods(pattern), Method(""Ns.Type::Name""), Decompile(x), IL(m), XrefsTo(x), Callers(x), Strings(pattern), Load(path), GoTo(x), Current, Save(module), Debugger. dnlib.DotNet is imported.
+- Call `reference` before guessing an API: `reference(""overview"")`, `reference(""TypeDef"")`.
+- Output is capped; filter with LINQ instead of dumping whole modules.
+- Malware/unknown binaries: run `triage`, then follow reference(""malware""). Analyze statically: never Assembly.Load or invoke sample code; LoadBytes() opens a decrypted stage for inspection only.
+- Record findings with Rename(x, name), Comment(x, text), Note(text). They persist per file across sessions; Annotations() shows earlier work.";
 
 		public JsonArray ListTools() => new JsonArray {
-			Tool("execute_csharp",
+			Tool("execute_csharp", "Execute C#",
+				readOnlyHint: false, destructiveHint: true, openWorldHint: true,
 				"Execute C# script code inside the running dnSpyEx instance and return the result plus captured output. " +
 				"Call reference(query) first; do not guess the API. State (variables, methods, types, usings) persists across calls in this session. " +
 				"A trailing expression (no semicolon) is returned. Globals: Modules, Types(), Type(), Methods(), Method(), Decompile(), IL(), XrefsTo(), Callers(), Strings(), Load(), GoTo(), Current, Save(), Debugger, Resolve<T>(), UI(() => ...). " +
 				"Top-level await is supported. Check Token.IsCancellationRequested in long loops.",
 				new JsonObject {
 					["code"] = Prop("string", "C# script code. Example: `Types(\"Crypto\").Select(t => t.FullName)` or `Decompile(Method(\"App.License::Validate\"))`"),
-					["timeout_seconds"] = Prop("number", $"Execution timeout in seconds (default {DefaultTimeoutSeconds})"),
+					["timeout_seconds"] = Prop("number", $"Execution timeout in seconds (default {DefaultTimeoutSeconds}). Clamped to 1–86400 inclusive; fractional seconds are allowed."),
 					["reset"] = Prop("boolean", "Discard all script state from previous calls before running (default false)"),
-					["max_output_chars"] = Prop("integer", $"Truncate output/result text beyond this many characters (default {DefaultMaxOutputChars})"),
+					["max_output_chars"] = Prop("integer", $"Truncate output/result text beyond this many characters (default {DefaultMaxOutputChars}). Clamped to 1000–10000000 inclusive."),
 				}, "code"),
-			Tool("reference",
-				"Look up the dnSpy scripting API and return a plain-text reference. Query a topic (overview, globals, dnlib, xrefs, editing, debugger, ui, recipes), " +
-				"a type (TypeDef, MethodDef, CilBody, Instruction, IDsDocumentService, DbgManager...), a member (\"TypeDef.Methods\", \"ScriptGlobals.Decompile\") or any keyword.",
+			Tool("reference", "Look up API reference",
+				readOnlyHint: true, destructiveHint: false, openWorldHint: false,
+				"Look up a dnSpy scripting API reference before writing execute_csharp code or when an API name is unclear. " +
+				"The query accepts a topic (overview, globals, dnlib, xrefs, editing, debugger, ui, recipes), a type (TypeDef), a member (TypeDef.Methods), or a keyword; omit it for the overview. " +
+				"Returns plain-text documentation, signatures, or search matches that you can narrow with a type or member query. " +
+				"This describes the scripting API; use list_documents or execute_csharp to inspect loaded assemblies and their code.",
 				new JsonObject {
-					["query"] = Prop("string", "Topic, type, member or keyword. Empty for the overview."),
+					["query"] = Prop("string", "Topic, type, member or keyword. Omit or leave empty for the overview."),
 				}),
-			Tool("list_documents",
-				"List the assemblies/modules currently loaded in dnSpy with their file paths, plus what the user has open (active tab and selection).",
+			Tool("list_documents", "List documents",
+				readOnlyHint: true, destructiveHint: false, openWorldHint: false,
+				"List documents currently loaded in dnSpy, including assembly/module identities and file paths. " +
+				"Use this to identify a loaded module before inspecting, saving, or closing it. " +
+				"Returns a document count and plain-text listing, with the active tab and tree selection when available. " +
+				"It does not list types or decompile code; use execute_csharp for those details.",
 				new JsonObject()),
-			Tool("open_assembly",
-				"Open an assembly/module file in dnSpy (like File > Open). Returns the loaded module. Already-open files are reused.",
+			Tool("open_assembly", "Open assembly",
+				readOnlyHint: false, destructiveHint: false, openWorldHint: false,
+				"Open an assembly or module in dnSpy from an absolute path on the machine running dnSpy. " +
+				"Use this to load a .dll, .exe, or .netmodule for inspection; already-open files are reused. " +
+				"Returns a plain-text summary with the module name, path, assembly identity, and type count. " +
+				"It does not return decompiled code; use execute_csharp after loading to inspect types and methods.",
 				new JsonObject {
 					["path"] = Prop("string", "Absolute path of the .dll/.exe/.netmodule to open"),
 				}, "path"),
-			Tool("close_assembly",
-				"Close (unload) an assembly from dnSpy.",
+			Tool("close_assembly", "Close assembly",
+				readOnlyHint: false, destructiveHint: true, openWorldHint: false,
+				"Close an assembly or module loaded in dnSpy, identified by assembly name, module name, file name, or full path. " +
+				"Use list_documents first if the target is unclear. " +
+				"Removes the top-level document containing the module and returns a plain-text confirmation with the module's path. " +
+				"It does not save edits or delete the file on disk; use save_module first if edits must be preserved.",
 				new JsonObject {
 					["name"] = Prop("string", "Assembly name, module name, file name or full path"),
 				}, "name"),
-			Tool("triage",
+			Tool("triage", "Triage module",
+				readOnlyHint: false, destructiveHint: false, openWorldHint: false,
 				"Malware/unknown-binary triage of a .NET module in one call: hashes and PE facts, obfuscation indicators, probable string decryptors, " +
 				"P/Invokes and notable APIs by category (dynamic loading, injection, network, crypto, persistence, anti-analysis...) with callers, " +
 				"categorized strings (URLs, IPs, registry, commands, credential targets, base64 blobs), possible embedded payloads, earlier notes, and where to start. " +
-				"Opens the file first if given a path. Same as execute_csharp `Triage(module)`, whose result also exposes the raw lists.",
+				"Static analysis only: sample code is never executed. Opens the file first if given a path. " +
+				"Same as execute_csharp `Triage(module)`, whose result also exposes the raw lists.",
 				new JsonObject {
 					["target"] = Prop("string", "Path of a file to open, or the name of a loaded module. Optional when exactly one sample is loaded."),
-					["max_per_category"] = Prop("integer", "Max items listed per category (default 12)"),
+					["max_per_category"] = Prop("integer", "Max items listed per category (default 12). Clamped to 1–1000 inclusive."),
 				}),
-			Tool("save_module",
-				"Write a (possibly edited) module to disk. Defaults to overwriting the original file.",
+			Tool("save_module", "Save module",
+				readOnlyHint: false, destructiveHint: true, openWorldHint: false,
+				"Save a loaded module to disk, including any in-memory edits. " +
+				"Use this after editing with execute_csharp or to write a copy of a loaded module; identify the target by assembly name, module name, file name, or full path. " +
+				"The output_path selects the destination on the machine running dnSpy; omitting it overwrites the module's original file, so supply a new path to preserve the original. " +
+				"Returns a plain-text confirmation with the written path, not the file contents or decompiled source.",
 				new JsonObject {
 					["name"] = Prop("string", "Assembly name, module name, file name or full path of a loaded module"),
 					["output_path"] = Prop("string", "Where to write it (default: overwrite the module's own file)"),
@@ -103,7 +126,8 @@ namespace dnSpy.Mcp.Server {
 
 		static JsonObject Prop(string type, string description) => new JsonObject { ["type"] = type, ["description"] = description };
 
-		static JsonObject Tool(string name, string description, JsonObject properties, params string[] required) {
+		static JsonObject Tool(string name, string title, bool readOnlyHint, bool destructiveHint, bool openWorldHint,
+			string description, JsonObject properties, params string[] required) {
 			var schema = new JsonObject {
 				["type"] = "object",
 				["properties"] = properties,
@@ -112,8 +136,15 @@ namespace dnSpy.Mcp.Server {
 				schema["required"] = new JsonArray(required.Select(r => (JsonNode)JsonValue.Create(r)!).ToArray());
 			return new JsonObject {
 				["name"] = name,
+				["title"] = title,
 				["description"] = description,
 				["inputSchema"] = schema,
+				["annotations"] = new JsonObject {
+					["title"] = title,
+					["readOnlyHint"] = readOnlyHint,
+					["destructiveHint"] = destructiveHint,
+					["openWorldHint"] = openWorldHint,
+				},
 			};
 		}
 
@@ -186,6 +217,11 @@ namespace dnSpy.Mcp.Server {
 			var result = await session.GetScript(host).ExecuteAsync(code, timeout, maxChars, reset).ConfigureAwait(false);
 
 			var sb = new StringBuilder();
+			if (!result.Success) {
+				sb.AppendLine($"[error: {result.ErrorKind}]");
+				sb.AppendLine(result.Error);
+				sb.AppendLine();
+			}
 			if (result.SessionWasReset)
 				sb.AppendLine("[note: the previous script timed out, so the session state was reset]");
 			if (result.Stdout.Length > 0) {
@@ -208,12 +244,6 @@ namespace dnSpy.Mcp.Server {
 					sb.AppendLine();
 				sb.AppendLine($"[result: {typeName}]");
 				sb.AppendLine(formatted);
-			}
-			if (!result.Success) {
-				if (sb.Length > 0)
-					sb.AppendLine();
-				sb.AppendLine($"[error: {result.ErrorKind}]");
-				sb.AppendLine(result.Error);
 			}
 			if (sb.Length == 0)
 				sb.AppendLine("[ok: no output; end with an expression (no semicolon) to return a value]");
